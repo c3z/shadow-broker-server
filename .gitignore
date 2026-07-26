@@ -1,0 +1,21 @@
+/node_modules
+/client-js/node_modules
+/proxy/node_modules
+
+# Python
+client-py/.venv/
+__pycache__/
+
+# Build artifacts
+sb-cli/sb
+sb-cli-go/sb
+
+# Logs
+*.log
+
+# Local database
+data/
+
+# Secrets / local config
+proxy/config.yaml
+.env

@@ -1,0 +1,30 @@
+# fly.toml app configuration file generated for shadow-broker-server on 2025-05-01T20:05:55+02:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'shadow-broker-server'
+primary_region = 'fra'
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+# Persistent volume for the embedded SQLite database (/data/broker.db),
+# so messages survive deploys and restarts.
+# Create it once before the first deploy:
+#   fly volumes create broker_data --region fra --size 1
+[[mounts]]
+  source = 'broker_data'
+  destination = '/data'

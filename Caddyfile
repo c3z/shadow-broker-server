@@ -1,0 +1,8 @@
+# Automatic HTTPS (Let's Encrypt) for the broker.
+# DOMAIN is injected from .env by docker compose.
+# Requires ports 80/443 open and an A/AAAA record for the domain
+# pointing at this server.
+
+{$DOMAIN} {
+	reverse_proxy broker:8080
+}

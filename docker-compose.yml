@@ -1,0 +1,47 @@
+# Self-hosted deployment: broker + Caddy (automatic HTTPS via Let's Encrypt).
+# Required variables come from .env (see .env.example):
+#   DOMAIN               - public DNS name pointing at this server
+#   SHADOW_BROKER_CONFIG - base64-encoded JSON config (see .env.example)
+
+services:
+  broker:
+    build: .
+    image: shadow-broker-server:latest
+    restart: unless-stopped
+    environment:
+      SHADOW_BROKER_CONFIG: ${SHADOW_BROKER_CONFIG:?Set SHADOW_BROKER_CONFIG in .env}
+      PORT: "8080"
+    volumes:
+      - broker-data:/data
+    # Not published on the host - only reachable through the caddy service.
+    expose:
+      - "8080"
+    healthcheck:
+      # /pull without credentials returns 401; any HTTP response proves liveness.
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://localhost:8080/pull"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # Let's Encrypt certificates
+      - caddy-config:/config
+    depends_on:
+      broker:
+        condition: service_healthy
+
+volumes:
+  broker-data:
+  caddy-data:
+  caddy-config:

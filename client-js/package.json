@@ -1,0 +1,21 @@
+{
+  "name": "client-ts",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "sender": "node testsender.js",
+    "count": "node testcounting.js",
+    "hard": "node testhard.js",
+    "receiver": "node testreceiver.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "base-64": "1.0.0",
+    "node-fetch": "3.3.2",
+    "ws": "8.18.1"
+  },
+  "devDependencies": {}
+}

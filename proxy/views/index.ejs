@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shadow Broker Webhook Proxy</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="container">
+        <h1>Shadow Broker Webhook Proxy</h1>
+        <div id="connection-status">
+          <span class="status-indicator status-disconnected"></span> Disconnected
+          <button class="btn btn-sm" onclick="resetAdminToken()" style="margin-left: 1rem">Reset token</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="container">
+      <div class="card">
+        <h2>Active Mappings</h2>
+        <table id="mappings-table">
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th>Webhook</th>
+              <th>Method</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="mappings-body">
+            <tr>
+              <td colspan="5" class="text-center">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Add New Mapping</h2>
+        <form id="add-mapping-form">
+          <div class="form-group">
+            <label for="channel">Channel</label>
+            <input type="text" id="channel" name="channel" required placeholder="Channel name to subscribe to" />
+          </div>
+          <div class="form-group">
+            <label for="webhook">Webhook URL</label>
+            <input type="url" id="webhook" name="webhook" required placeholder="https://example.com/webhook" />
+          </div>
+          <div class="form-group">
+            <label for="method">Method</label>
+            <select id="method" name="method">
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="parseJson" name="parseJson" checked />
+              Parse JSON (try to parse message as JSON before forwarding)
+            </label>
+          </div>
+          <button type="submit" class="btn">Add Mapping</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Live Logs</h2>
+        <div class="logs-container" id="logs"></div>
+      </div>
+
+      <div class="card">
+        <h2>Configuration Editor</h2>
+        <div class="form-group">
+          <textarea id="config-editor" rows="12"></textarea>
+        </div>
+        <div class="button-group">
+          <button id="save-config" class="btn">Save Configuration</button>
+          <button id="restart-proxy" class="btn btn-danger">Restart Proxy</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

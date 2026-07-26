@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  shadow-webhook-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shadow-webhook-proxy
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      - PORT=3000
+    networks:
+      - proxy-network
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/health']
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - ./logs:/app/logs
+      - ./config.yaml:/app/config.yaml
+      - config-data:/app/data
+
+volumes:
+  config-data:
+    driver: local
+
+networks:
+  proxy-network:
+    driver: bridge

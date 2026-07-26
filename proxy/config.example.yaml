@@ -1,0 +1,16 @@
+shadowBrokerConfig: >-
+  base64encodedshadowbrokerconfig
+# Token protecting the web UI and all /api/* endpoints.
+# Pass it as "Authorization: Bearer <token>" header or "?token=" query param.
+# Can be overridden with the PROXY_ADMIN_TOKEN environment variable.
+# If empty, the API and UI are left unprotected (a warning is logged at startup).
+admin_token: ""
+server:
+  port: 3000
+  logLevel: info
+mappings:
+  - channel: noti
+    webhook: >-
+      https://n8n.int.pwan0.com/webhook-test/a0c98f2c-5d08-40ff-824e-a4b20e407768
+    method: GET
+    parseJson: true
