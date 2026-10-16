@@ -12,9 +12,8 @@ fi
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 OUTPUT_NAME="sb"
-MAIN_GO="main.go"
 
-echo "Compiling $MAIN_GO into $OUTPUT_NAME..."
+echo "Compiling package into $OUTPUT_NAME..."
 
 # Change to the script's directory to ensure relative paths work
 cd "$DIR"
@@ -22,10 +21,10 @@ cd "$DIR"
 # Tidy dependencies (optional but good practice)
 go mod tidy
 
-# Build the Go program
-# -o specifies the output file name
-# We pass the main go file to build
-go build -o "$OUTPUT_NAME" "$MAIN_GO"
+# Build the whole package (main.go + tui.go + selftest.go). Building main.go
+# alone silently drops the other files and the binary fails to compile.
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+go build -ldflags "-X main.version=$VERSION" -o "$OUTPUT_NAME" .
 
 if [ $? -eq 0 ]; then
     echo "Compilation successful! Executable created at $DIR/$OUTPUT_NAME"

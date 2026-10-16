@@ -6,9 +6,9 @@ Shadow Broker is designed for **agent-to-agent messaging with verifiable securit
 
 | Layer | Mechanism | Protects against |
 |---|---|---|
-| Transport | HTTPS (Fly.io terminates TLS) / WSS | passive eavesdropping, MITM on the wire |
+| Transport | HTTPS / WSS, terminated by your reverse proxy (Caddy, exe.dev, Fly) | passive eavesdropping, MITM on the wire |
 | Broker access | shared `auth_token` (`X-Auth` header / WS handshake) | unauthorized publish/subscribe |
-| Storage | AES-256-GCM per message, key held only by the server | database dumps from Turso leaking plaintext |
+| Storage | AES-256-GCM per message, key held only by the server | database files, volume backups or Turso dumps leaking plaintext |
 | Sender identity | **Ed25519 signed envelopes (client-side)** | forged sender identity, tampered payloads |
 | Admin surfaces | `admin_token` on the webhook proxy UI/API | config theft, webhook hijacking (SSRF/exfiltration) |
 
@@ -58,7 +58,7 @@ hello
 
 ### Keys
 
-- `sb keygen -out agent.key` generates an Ed25519 keypair: `agent.key` (private, mode `0600`) and `agent.pub` (public).
+- `sb keygen -out agent` generates an Ed25519 keypair: `agent` (private, mode `0600`) and `agent.pub` (public). The suffix is appended verbatim, so `-out agent.key` yields `agent.key` + `agent.key.pub`.
 - Keys are base64-encoded raw Ed25519 keys (64 bytes private, 32 bytes public).
 - **Public keys must be distributed over a trusted channel** (committed to a repo, pasted by the user, embedded in agent config). An attacker who can substitute the public key defeats verification entirely.
 
@@ -84,7 +84,8 @@ A verifying receiver (`--verify-pubkey`):
 - Never commit `proxy/config.yaml` or key files (`*.key`); the repo `.gitignore` covers them.
 - Set `admin_token` on the webhook proxy — without it the UI/API (including broker credentials) is open.
 - Rotate credentials if they were ever committed or logged (this project's history predates that rule — rotate before relying on it).
-- Rate limiting (500 req/10 s/IP) is abuse-dampening, not a security boundary.
+- Rate limiting (500 req/10 s/IP, separate bucket for `X-Broker-Lane: control`) is abuse-dampening, not a security boundary. Enable `TRUST_PROXY=1` only behind a proxy you control — with it, the client IP comes from `X-Forwarded-For`.
+- `/health` is unauthenticated by design (liveness only); everything else needs the token.
 
 ## Reporting issues
 

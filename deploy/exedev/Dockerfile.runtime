@@ -1,0 +1,29 @@
+# Runtime-only image for hosts without a Go toolchain or spare disk (exe.dev).
+# The binary is cross-compiled on the operator's machine by deploy.sh; this
+# stage mirrors the final stage of the main Dockerfile.
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-ca-certificates
+
+RUN groupadd --system broker \
+    && useradd --system --gid broker --home-dir /app broker
+
+WORKDIR /app
+RUN mkdir -p /data && chown broker:broker /data
+VOLUME ["/data"]
+
+COPY --chmod=755 run-app /usr/local/bin/run-app
+
+# Listen on all interfaces of the container namespace; the host side is bound
+# to 127.0.0.1 by upgrade.py, the exe.dev proxy reaches it over loopback.
+ENV BIND_HOST=0.0.0.0
+ENV TRUST_PROXY=1
+
+USER broker
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -sf -o /dev/null http://127.0.0.1:8080/health || exit 1
+CMD ["run-app"]

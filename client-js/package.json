@@ -2,7 +2,7 @@
   "name": "client-ts",
   "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
+  "main": "shadowClient.js",
   "scripts": {
     "sender": "node testsender.js",
     "count": "node testcounting.js",
@@ -17,5 +17,6 @@
     "node-fetch": "3.3.2",
     "ws": "8.18.1"
   },
-  "devDependencies": {}
+  "devDependencies": {},
+  "types": "shadowClient.d.ts"
 }

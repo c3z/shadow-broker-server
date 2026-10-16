@@ -30,6 +30,9 @@ type Config struct {
 	AuthToken string `json:"auth_token"`
 }
 
+// version is stamped at build time: go build -ldflags "-X main.version=<v>" (see compile.sh).
+var version = "dev"
+
 // ShadowClient interacts with the ShadowBroker server.
 type ShadowClient struct {
 	config              Config
@@ -308,6 +311,15 @@ func (c *ShadowClient) buildURL(path string) (string, error) {
 
 // Publish sends a message to a queue.
 func (c *ShadowClient) Publish(queue, message string) (int64, error) {
+	return c.PublishLane(queue, message, "")
+}
+
+// PublishLane publishes with an explicit lane. lane "control" sets the
+// X-Broker-Lane header, which gives authenticated control traffic its own
+// rate-limit budget on the broker (QoS, see docs/protocol.md). It does not
+// change ordering or storage; queue names ending in ".control" are what the
+// broker dispatches first.
+func (c *ShadowClient) PublishLane(queue, message, lane string) (int64, error) {
 	if queue == "" {
 		return 0, errors.New("queue name must be a non-empty string")
 	}
@@ -329,6 +341,9 @@ func (c *ShadowClient) Publish(queue, message string) (int64, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Auth", c.config.AuthToken)
+	if lane != "" {
+		req.Header.Set("X-Broker-Lane", lane)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -780,8 +795,9 @@ Usage:
   sb <command> [arguments] [--json]
 
 Commands:
-  send <queue> <message> [--sign --key <file|base64> --from <name>]
-                                   - Publish a message to a queue (optionally as a signed envelope)
+  send <queue> <message> [--sign --key <file|base64> --from <name>] [--lane control]
+                                   - Publish a message to a queue (optionally as a signed envelope;
+                                     --lane control uses the broker's separate control rate-limit budget)
   pull <queue> [since] [limit] [--verify-pubkey <file|base64>]
                                    - Pull messages from a queue (default since=0, limit=100)
   subscribe <queue> [--verify-pubkey <file|base64>]
@@ -793,6 +809,7 @@ Commands:
                                      WS subscribe + verify, pull); exit 0 when all pass
   keygen [-out <prefix>]           - Generate an Ed25519 keypair (writes <prefix> and <prefix>.pub with -out)
   ping                             - Test connectivity to the broker
+  version                          - Print the CLI version
   help                             - Show this usage
 
 Global flags:
@@ -861,6 +878,20 @@ func main() {
 
 	cmd := args[0]
 
+	// version and help never touch the broker config
+	switch cmd {
+	case "version":
+		if jsonOut {
+			fmt.Printf("{\"version\":%q}\n", version)
+		} else {
+			fmt.Println("sb " + version)
+		}
+		return
+	case "help":
+		printUsage()
+		return
+	}
+
 	// keygen works locally and does not need the broker config
 	if cmd == "keygen" {
 		runKeygen(args[1:])
@@ -880,12 +911,16 @@ func main() {
 		rest, doSign := extractBoolFlag(rest, "sign")
 		keyRef, rest, _ := extractFlag(rest, "key")
 		fromName, rest, _ := extractFlag(rest, "from")
+		lane, rest, _ := extractFlag(rest, "lane")
+		if lane != "" && lane != "control" && lane != "content" {
+			log.Fatalf("Unknown lane %q (use control or content)", lane)
+		}
 		// "--key" without an explicit "--sign" also enables signing
 		if keyRef != "" && !doSign {
 			doSign = true
 		}
 		if len(rest) != 2 {
-			log.Fatal("Usage: sb send <queue> <message> [--sign --key <file|base64> --from <name>]")
+			log.Fatal("Usage: sb send <queue> <message> [--sign --key <file|base64> --from <name>] [--lane control]")
 		}
 		queue, message := rest[0], rest[1]
 		if doSign {
@@ -901,7 +936,7 @@ func main() {
 				log.Fatalf("Signing error: %v", err)
 			}
 		}
-		id, err := client.Publish(queue, message)
+		id, err := client.PublishLane(queue, message, lane)
 		if err != nil {
 			log.Fatalf("Error publishing: %v", err)
 		}
@@ -1049,9 +1084,6 @@ func main() {
 		if !success {
 			os.Exit(1)
 		}
-
-	case "help":
-		printUsage()
 
 	default:
 		log.Printf("Unknown command: %s", cmd)
