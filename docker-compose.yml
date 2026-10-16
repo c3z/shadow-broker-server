@@ -17,8 +17,7 @@ services:
     expose:
       - "8080"
     healthcheck:
-      # /pull without credentials returns 401; any HTTP response proves liveness.
-      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://localhost:8080/pull"]
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3

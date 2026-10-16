@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,20 +24,55 @@ import (
 
 // ======================= CONFIG AND STRUCTURES =======================
 
-// wsClient wraps a WS connection with a per-connection write mutex.
-// gorilla/websocket does not support concurrent writes, so every write
-// (broadcasts, pongs) must go through writeMessage.
+// Each subscriber owns a bounded writer queue. Network writes never run in the poller.
 type wsClient struct {
-	conn    *websocket.Conn
-	writeMu sync.Mutex
+	conn *websocket.Conn
+	out  chan []byte
+	done chan struct{}
+	once sync.Once
 }
 
-// writeMessage sends a text message with a write deadline, serialized per client.
 func (c *wsClient) writeMessage(payload []byte) error {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	return c.conn.WriteMessage(websocket.TextMessage, payload)
+	select {
+	case <-c.done:
+		return fmt.Errorf("subscriber closed")
+	default:
+	}
+	select {
+	case c.out <- payload:
+		return nil
+	default:
+		return fmt.Errorf("subscriber queue full")
+	}
+}
+func (c *wsClient) close() {
+	c.once.Do(func() {
+		close(c.done)
+		if c.conn != nil {
+			c.conn.Close()
+		}
+	})
+}
+func (c *wsClient) writeLoop() {
+	defer c.close()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.done:
+			return
+		case payload := <-c.out:
+			c.conn.SetWriteDeadline(time.Now().Add(time.Second))
+			if err := c.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+				return
+			}
+		case <-ticker.C:
+			c.conn.SetWriteDeadline(time.Now().Add(time.Second))
+			if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(time.Second)); err != nil {
+				return
+			}
+		}
+	}
 }
 
 type BrokerConfig struct {
@@ -66,6 +103,7 @@ var (
 	// Poller
 	globalMaxID int64 = 0 // for detecting new messages in DB
 	pollMu      sync.Mutex
+	wakePoller  = make(chan struct{}, 1)
 )
 
 // ======================= CORS MIDDLEWARE =======================
@@ -108,6 +146,7 @@ func publishHandler(w http.ResponseWriter, r *http.Request) {
 		Message string `json:"message"`
 	}
 	var req pubReq
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024*1024)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -132,6 +171,10 @@ func publishHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	select {
+	case wakePoller <- struct{}{}:
+	default:
+	}
 	logger.Printf("PUBLISH queue=%s id=%d\n", req.Queue, msgID)
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(fmt.Sprintf(`{"id":%d}`, msgID)))
@@ -240,6 +283,8 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	conn.SetReadLimit(4096)
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	// Read auth token in the first message
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
@@ -257,13 +302,15 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if handshake.Token != gConf.AuthToken {
-		log.Printf("WS handshake rejected: invalid token (remote=%s)\n", r.RemoteAddr)
+		log.Printf("WS handshake rejected: invalid token (remote=%s)\n", clientIP(r))
 		conn.Close()
 		return
 	}
 
-	client := &wsClient{conn: conn}
-	logger.Printf("WS CONNECT queue=%s remote=%s\n", queue, r.RemoteAddr)
+	conn.SetReadDeadline(time.Time{})
+	client := &wsClient{conn: conn, out: make(chan []byte, 64), done: make(chan struct{})}
+	go client.writeLoop()
+	logger.Printf("WS CONNECT queue=%s remote=%s\n", queue, clientIP(r))
 	clientsMu.Lock()
 	if clients[queue] == nil {
 		clients[queue] = make(map[*wsClient]bool)
@@ -276,8 +323,8 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			clientsMu.Lock()
 			delete(clients[queue], client)
 			clientsMu.Unlock()
-			conn.Close()
-			logger.Printf("WS DISCONNECT queue=%s remote=%s\n", queue, r.RemoteAddr)
+			client.close()
+			logger.Printf("WS DISCONNECT queue=%s remote=%s\n", queue, clientIP(r))
 		}()
 		for {
 			mt, msg, err := conn.ReadMessage()
@@ -291,7 +338,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 						pong := map[string]string{"type": "pong"}
 						pongData, _ := json.Marshal(pong)
 						if err := client.writeMessage(pongData); err != nil {
-							logger.Printf("WS pong error queue=%s remote=%s: %v\n", queue, r.RemoteAddr, err)
+							logger.Printf("WS pong error queue=%s remote=%s: %v\n", queue, clientIP(r), err)
 							break
 						}
 					}
@@ -303,7 +350,11 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 func rateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+		ip := clientIP(r)
+		// Authenticated control admission has its own budget, independent of content traffic.
+		if r.Header.Get("X-Auth") == gConf.AuthToken && r.Header.Get("X-Broker-Lane") == "control" {
+			ip += ":control"
+		}
 		now := time.Now()
 
 		rateLimitMu.Lock()
@@ -374,12 +425,19 @@ func initGlobalMaxID() {
 	logger.Printf("WARNING: could not read MAX(id), poller starting from 0: %v\n", lastErr)
 }
 
-func startPoller() {
+func startPoller() { runPoller(context.Background()) }
+
+func runPoller(ctx context.Context) {
 	logger.Printf("Poller started (from id=%d)\n", globalMaxID)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	for {
-		<-ticker.C
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		case <-wakePoller:
+		}
 		pollMu.Lock()
 		newMessages, err := store.FetchNew(globalMaxID)
 		if err != nil {
@@ -398,8 +456,20 @@ func startPoller() {
 				queueMessages[row.Queue] = append(queueMessages[row.Queue], row)
 			}
 
-			// Process each queue's messages sequentially in order
-			for _, messages := range queueMessages {
+			// Control queues are dispatched before content; each subscriber writes independently.
+			queues := make([]string, 0, len(queueMessages))
+			for queue := range queueMessages {
+				queues = append(queues, queue)
+			}
+			sort.Slice(queues, func(i, j int) bool {
+				a, b := strings.HasSuffix(queues[i], ".control"), strings.HasSuffix(queues[j], ".control")
+				if a != b {
+					return a
+				}
+				return queues[i] < queues[j]
+			})
+			for _, queue := range queues {
+				messages := queueMessages[queue]
 				// Sort by ID to ensure correct order
 				sort.Slice(messages, func(i, j int) bool {
 					return messages[i].ID < messages[j].ID
@@ -444,7 +514,7 @@ func broadcastRow(row DBMessage) {
 	for _, c := range subs {
 		if err := c.writeMessage(payload); err != nil {
 			logger.Printf("WS send error to id=%d: %v\n", row.ID, err)
-			c.conn.Close()
+			c.close()
 			clientsMu.Lock()
 			delete(clients[row.Queue], c)
 			clientsMu.Unlock()
@@ -555,6 +625,7 @@ func main() {
 	mux.HandleFunc("/publish", publishHandler)
 	mux.HandleFunc("/ws", wsHandler)
 	mux.HandleFunc("/pull", pullHandler)
+	mux.HandleFunc("/health", healthHandler)
 	// Rate-limit
 	wrapped := rateLimitMiddleware(mux)
 
@@ -567,8 +638,64 @@ func main() {
 	}
 	logger.Printf("ShadowBroker starting on port %s, URL: %s\n", port, gConf.URL)
 	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: wrapped,
+		Addr:              bindHost() + ":" + port,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		Handler:           wrapped,
 	}
 	log.Fatal(srv.ListenAndServe())
+}
+
+func bindHost() string {
+	if host := os.Getenv("BIND_HOST"); host != "" {
+		return host
+	}
+	return "127.0.0.1"
+}
+
+// trustProxy enables X-Forwarded-For / X-Real-IP for client identification.
+// Opt-in (TRUST_PROXY=1): behind exe.dev, Caddy or nginx RemoteAddr is always the
+// proxy, so the per-IP rate limit would otherwise be one global bucket. Trusting
+// these headers from the open internet would let callers pick their own bucket.
+var trustProxy = os.Getenv("TRUST_PROXY") == "1"
+
+// clientIP returns the caller's IP without port, honouring proxy headers when trusted.
+func clientIP(r *http.Request) string {
+	if trustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
+				return first
+			}
+		}
+		if rip := strings.TrimSpace(r.Header.Get("X-Real-IP")); rip != "" {
+			return rip
+		}
+	}
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
+}
+
+var startedAt = time.Now()
+
+// healthHandler answers liveness probes without credentials. 200 means the
+// process is up and the store answers a query; it reveals nothing about queues
+// or payloads. A 503 from a reverse proxy therefore means "broker not running".
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if _, err := store.MaxID(); err != nil {
+		logger.Printf("HEALTH store error: %v\n", err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"degraded","store":"error"}`))
+		return
+	}
+	fmt.Fprintf(w, `{"status":"ok","uptime_s":%d}`, int64(time.Since(startedAt).Seconds()))
 }

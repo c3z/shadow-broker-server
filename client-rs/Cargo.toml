@@ -1,0 +1,16 @@
+[package]
+name = "shadow-broker-client"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Minimal client for Shadow Broker (publish, pull, subscribe, health)"
+repository = "https://github.com/c3z/shadow-broker-server"
+
+[dependencies]
+base64 = "0.22"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }

@@ -72,13 +72,17 @@ class ShadowClientPy:
             secret_key=parsed.get("secret_key"),
         )
 
-    def publish(self, queue: str, message: str) -> str:
+    def publish(self, queue: str, message: str, lane: str | None = None) -> str:
         """
         Publishes a message to the specified queue via HTTP POST.
         Returns the ID of the newly published message.
+        lane="control" sets X-Broker-Lane (separate rate-limit budget on the
+        broker); dispatch priority comes from the queue name ending in ".control".
         """
         endpoint = self.conf.url.rstrip("/") + "/publish"
         headers = {"Content-Type": "application/json", "X-Auth": self.conf.auth_token}
+        if lane:
+            headers["X-Broker-Lane"] = lane
         payload = {"queue": queue, "message": message}
 
         logging.info(f"Publishing to queue='{queue}' => {message!r}")

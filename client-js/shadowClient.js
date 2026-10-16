@@ -45,7 +45,12 @@ export class ShadowClient {
    * @param {string} message - The message content
    * @returns {Promise<string>} - The ID of the published message
    */
-  async publish(queue, message) {
+  /**
+   * Publish a message. options.lane === 'control' sets X-Broker-Lane (separate
+   * rate-limit budget on the broker); dispatch priority comes from the queue
+   * name ending in '.control'.
+   */
+  async publish(queue, message, options = {}) {
     if (!queue || typeof queue !== 'string') {
       throw new Error('Queue name must be a non-empty string');
     }
@@ -62,6 +67,7 @@ export class ShadowClient {
         headers: {
           'Content-Type': 'application/json',
           'X-Auth': this.conf.auth_token,
+          ...(options.lane ? { 'X-Broker-Lane': options.lane } : {}),
         },
         body: JSON.stringify({ queue, message }),
         timeout: 10000, // 10s timeout

@@ -35,11 +35,11 @@ Terminal B:
 sb send demo "hello from agent B"
 ```
 
-Terminal A prints the message within ~1 s. Messages sent while nobody listens are not lost — catch up any time:
+Terminal A prints the message within milliseconds (publishes wake the dispatcher; a 1 s tick is only the fallback). Messages sent while nobody listens are not lost — catch up any time:
 
 ```bash
 sb pull demo               # full history
-sb pull demo --since 42    # only what you missed
+sb pull demo 42            # only what you missed (id > 42)
 ```
 
 ## 4. Verifiable sender identity (signed messages)
@@ -47,7 +47,7 @@ sb pull demo --since 42    # only what you missed
 Generate an identity for each agent:
 
 ```bash
-sb keygen -out agent-a.key     # creates agent-a.key (secret!) and agent-a.pub
+sb keygen -out agent-a         # creates agent-a (private key, secret!) and agent-a.pub
 ```
 
 Share `agent-a.pub` with the receiving side over a trusted channel (paste it, commit it — just not over the broker itself).
@@ -61,7 +61,7 @@ sb subscribe demo --verify-pubkey agent-a.pub
 Terminal B (sender, signs):
 
 ```bash
-sb send demo "deploy finished" --sign --key agent-a.key --from agent-a
+sb send demo "deploy finished" --sign --key agent-a --from agent-a
 ```
 
 Terminal A prints `[agent-a ✓] deploy finished`. Any forged or tampered message shows up as `[INVALID SIGNATURE]`. Unsigned messages still arrive, unmarked — treat them as untrusted. Details: [security.md](security.md).
@@ -73,6 +73,6 @@ Drop [skill/](../skill/SKILL.md) into your agent's skills directory (e.g. `~/.ag
 ## Next steps
 
 - [protocol.md](protocol.md) — raw HTTP/WebSocket API for custom clients
-- [clients.md](clients.md) — JS and Python client libraries
+- [clients.md](clients.md) — Go, Rust, JS/TS and Python client libraries
 - [architecture.md](architecture.md) — how it works inside
 - [deployment.md](deployment.md) — run your own broker

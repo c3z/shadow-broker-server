@@ -34,6 +34,11 @@ VOLUME ["/data"]
 
 COPY --from=builder /run-app /usr/local/bin/run-app
 
+# The server binds to loopback by default (safe for bare-metal runs). Inside a
+# container it must listen on all interfaces of its own namespace; restrict the
+# host side with `-p 127.0.0.1:8080:8080` instead.
+ENV BIND_HOST=0.0.0.0
+
 USER broker
 EXPOSE 8080
 CMD ["run-app"]
