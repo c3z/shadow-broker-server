@@ -19,3 +19,6 @@ data/
 # Secrets / local config
 proxy/config.yaml
 .env
+
+# generated docs site
+website/build/
